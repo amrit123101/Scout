@@ -17,7 +17,7 @@ jobs:
   scrape-and-push:
     runs-on: ubuntu-latest
     env:
-      # Fixes the Node.js deprecation error
+      # This fixes the Node.js deprecation warning
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
       - name: Set up Python
