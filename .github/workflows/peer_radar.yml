@@ -39,38 +39,46 @@ jobs:
           U_ID = os.environ.get("U_ID")
 
           def scrape():
-              print(f"📡 Initializing UDP Radar for {INFO_HASH}...")
-              ses = lt.session({'listen_interfaces': '0.0.0.0:6881', 'enable_dht': True})
-              ses.add_dht_router("router.bittorrent.com", 6881)
-              ses.add_dht_router("router.utorrent.com", 6881)
-              ses.add_dht_router("dht.transmissionbt.com", 6881)
+              print(f"📡 [SCOUT] Launching Modern Radar for ID: {U_ID}")
+              print(f"🔍 [SCOUT] Target Hash: {INFO_HASH}")
               
-              handle = ses.add_torrent({'save_path': './tmp', 'url': f"magnet:?xt=urn:btih:{INFO_HASH}"})
+              settings = {
+                  'listen_interfaces': '0.0.0.0:6881',
+                  'enable_dht': True,
+                  'dht_bootstrap_nodes': 'router.bittorrent.com:6881,router.utorrent.com:6881,dht.transmissionbt.com:6881'
+              }
+              ses = lt.session(settings)
+              
+              magnet = f"magnet:?xt=urn:btih:{INFO_HASH}"
+              atp = lt.parse_magnet_uri(magnet)
+              atp.save_path = './tmp'
+              handle = ses.add_torrent(atp)
 
               sent_ips = set()
-              # Run for 10 minutes, pushing new peers every 60 seconds
-              for minute in range(10):
-                  time.sleep(60)
+              print("🌐 [SCOUT] Crawling DHT network (10 min mission)...")
+
+              for i in range(60):
+                  time.sleep(10)
+                  s = handle.status()
                   peers = handle.get_peer_info()
                   
-                  # Extract valid IPs
-                  extracted = [{"ip": p.ip[0], "port": p.ip[1]} for p in peers if p.ip[0]]
+                  print(f"⏱️ [{i*10}s] DHT Nodes: {s.dht_nodes} | Peers Found: {len(peers)}", flush=True)
                   
-                  # Filter out ones we've already sent
+                  extracted = [{"ip": p.ip[0], "port": p.ip[1]} for p in peers if p.ip[0]]
                   new_peers = [p for p in extracted if f"{p['ip']}:{p['port']}" not in sent_ips]
                   
                   if new_peers:
-                      print(f"[{minute+1}m] Found {len(new_peers)} new peers. Pushing to Muscle...")
+                      print(f"🚀 [SCOUT] Found {len(new_peers)} new UDP peers! Injecting to Muscle...", flush=True)
                       try:
                           r = requests.post(f"{HF_BASE}/inject_peers", json={"id": U_ID, "peers": new_peers}, timeout=10)
                           if r.status_code == 200:
                               for p in new_peers: sent_ips.add(f"{p['ip']}:{p['port']}")
+                              print(f"✅ [SCOUT] Injection Successful (Code 200)")
                       except Exception as e:
-                          print(f"Push failed: {e}")
-                  else:
-                      print(f"[{minute+1}m] Scanning DHT...")
-                      
+                          print(f"❌ [SCOUT] Injection Failed: {e}")
+
           if __name__ == "__main__":
               scrape()
           EOF
+          
           python scraper.py
