@@ -10,7 +10,7 @@ on:
         description: 'Unique ID matching HF'
         required: true
       hf_url:
-        description: 'HF Space URL (e.g. https://user-space.hf.space)'
+        description: 'HF Space URL'
         required: true
 
 jobs:
@@ -23,7 +23,7 @@ jobs:
           python-version: '3.10'
 
       - name: Install Dependencies
-        run: pip install requests libtorrent
+        run: python -m pip install requests libtorrent
 
       - name: Run Peer Scraper
         env:
@@ -39,26 +39,38 @@ jobs:
           U_ID = os.environ.get("U_ID")
 
           def scrape():
+              print(f"📡 Initializing UDP Radar for {INFO_HASH}...")
               ses = lt.session({'listen_interfaces': '0.0.0.0:6881', 'enable_dht': True})
               ses.add_dht_router("router.bittorrent.com", 6881)
+              ses.add_dht_router("router.utorrent.com", 6881)
+              ses.add_dht_router("dht.transmissionbt.com", 6881)
               
               handle = ses.add_torrent({'save_path': './tmp', 'url': f"magnet:?xt=urn:btih:{INFO_HASH}"})
-              print(f"📡 Radar Active for {INFO_HASH}...")
 
               sent_ips = set()
+              # Run for 10 minutes, pushing new peers every 60 seconds
               for minute in range(10):
                   time.sleep(60)
                   peers = handle.get_peer_info()
+                  
+                  # Extract valid IPs
                   extracted = [{"ip": p.ip[0], "port": p.ip[1]} for p in peers if p.ip[0]]
                   
+                  # Filter out ones we've already sent
                   new_peers = [p for p in extracted if f"{p['ip']}:{p['port']}" not in sent_ips]
                   
                   if new_peers:
+                      print(f"[{minute+1}m] Found {len(new_peers)} new peers. Pushing to Muscle...")
                       try:
-                          requests.post(f"{HF_BASE}/inject_peers", json={"id": U_ID, "peers": new_peers}, timeout=10)
-                          for p in new_peers: sent_ips.add(f"{p['ip']}:{p['port']}")
-                          print(f"Pushed {len(new_peers)} new peers.")
-                      except Exception as e: print(f"Push failed: {e}")
-          if __name__ == "__main__": scrape()
+                          r = requests.post(f"{HF_BASE}/inject_peers", json={"id": U_ID, "peers": new_peers}, timeout=10)
+                          if r.status_code == 200:
+                              for p in new_peers: sent_ips.add(f"{p['ip']}:{p['port']}")
+                      except Exception as e:
+                          print(f"Push failed: {e}")
+                  else:
+                      print(f"[{minute+1}m] Scanning DHT...")
+                      
+          if __name__ == "__main__":
+              scrape()
           EOF
           python scraper.py
