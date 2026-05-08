@@ -59,10 +59,12 @@ jobs:
 
               for i in range(60):
                   time.sleep(10)
+                  
                   s = handle.status()
+                  ses_status = ses.status() # <--- THE FIX: Grab Session Status for DHT
                   peers = handle.get_peer_info()
                   
-                  print(f"⏱️ [{i*10}s] DHT Nodes: {s.dht_nodes} | Peers Found: {len(peers)}", flush=True)
+                  print(f"⏱️ [{i*10}s] DHT Nodes: {ses_status.dht_nodes} | Peers Found: {len(peers)}", flush=True)
                   
                   extracted = [{"ip": p.ip[0], "port": p.ip[1]} for p in peers if p.ip[0]]
                   new_peers = [p for p in extracted if f"{p['ip']}:{p['port']}" not in sent_ips]
