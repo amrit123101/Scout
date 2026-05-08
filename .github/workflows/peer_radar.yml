@@ -57,27 +57,47 @@ jobs:
               sent_ips = set()
               print("🌐 [SCOUT] Crawling DHT network (10 min mission)...")
 
-              for i in range(60):
-                  time.sleep(10)
-                  
-                  s = handle.status()
-                  ses_status = ses.status() # <--- THE FIX: Grab Session Status for DHT
+              def scrape():
+              print(f"📡 [SCOUT] Radar Active for {U_ID}")
+              
+              # Hard timeout at 60 minutes to prevent billing runaway
+              start_time = time.time()
+              max_runtime = 3600 
+              
+              ses = lt.session({'listen_interfaces': '0.0.0.0:6881', 'enable_dht': True})
+              handle = ses.add_torrent(lt.parse_magnet_uri(f"magnet:?xt=urn:btih:{INFO_HASH}"))
+              handle.save_path = './tmp'
+
+              sent_ips = set()
+
+              while (time.time() - start_time) < max_runtime:
+                  # 1. CHECK MUSCLE STATUS
+                  try:
+                      r = requests.get(f"{HF_BASE}/status/{U_ID}", timeout=5)
+                      if r.json().get("status") == "completed":
+                          print(f"🏁 [SCOUT] Muscle reported completion. Shutting down to save minutes.")
+                          break
+                  except Exception as e:
+                      print(f"⚠️ [SCOUT] Status check failed (Muscle might be restarting): {e}")
+
+                  # 2. SCAN AND INJECT
                   peers = handle.get_peer_info()
-                  
-                  print(f"⏱️ [{i*10}s] DHT Nodes: {ses_status.dht_nodes} | Peers Found: {len(peers)}", flush=True)
-                  
                   extracted = [{"ip": p.ip[0], "port": p.ip[1]} for p in peers if p.ip[0]]
                   new_peers = [p for p in extracted if f"{p['ip']}:{p['port']}" not in sent_ips]
                   
                   if new_peers:
-                      print(f"🚀 [SCOUT] Found {len(new_peers)} new UDP peers! Injecting to Muscle...", flush=True)
                       try:
-                          r = requests.post(f"{HF_BASE}/inject_peers", json={"id": U_ID, "peers": new_peers}, timeout=10)
-                          if r.status_code == 200:
-                              for p in new_peers: sent_ips.add(f"{p['ip']}:{p['port']}")
-                              print(f"✅ [SCOUT] Injection Successful (Code 200)")
-                      except Exception as e:
-                          print(f"❌ [SCOUT] Injection Failed: {e}")
+                          requests.post(f"{HF_BASE}/inject_peers", json={"id": U_ID, "peers": new_peers}, timeout=10)
+                          for p in new_peers: sent_ips.add(f"{p['ip']}:{p['port']}")
+                          print(f"🎯 [SCOUT] Injected {len(new_peers)} new peers.")
+                      except: pass
+
+                  # 3. SLEEP (Least Action Min Optimization)
+                  # We wait 30 seconds between scans to reduce API noise
+                  time.sleep(30)
+
+              if (time.time() - start_time) >= max_runtime:
+                  print("⏰ [SCOUT] Reached 60-minute safety limit. Exiting.")
 
           if __name__ == "__main__":
               scrape()
