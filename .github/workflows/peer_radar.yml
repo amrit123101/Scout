@@ -16,8 +16,8 @@ on:
 jobs:
   scrape-and-push:
     runs-on: ubuntu-latest
-    # This fixes the Node.js 20 deprecation warning
     env:
+      # Forces the runner to use Node24 to clear the deprecation warning
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
       - name: Set up Python
@@ -43,16 +43,10 @@ jobs:
 
           def scrape():
               print(f"📡 [SCOUT] Radar Active for {U_ID}")
-              
               start_time = time.time()
               max_runtime = 3600 
               
-              settings = {
-                  'listen_interfaces': '0.0.0.0:6881',
-                  'enable_dht': True,
-                  'dht_bootstrap_nodes': 'router.bittorrent.com:6881,router.utorrent.com:6881'
-              }
-              ses = lt.session(settings)
+              ses = lt.session({'listen_interfaces': '0.0.0.0:6881', 'enable_dht': True})
               handle = ses.add_torrent(lt.parse_magnet_uri(f"magnet:?xt=urn:btih:{INFO_HASH}"))
               handle.save_path = './tmp'
 
