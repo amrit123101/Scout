@@ -1,0 +1,64 @@
+name: Peer Radar Scraper
+
+on:
+  workflow_dispatch:
+    inputs:
+      info_hash:
+        description: '40-char Hex Hash'
+        required: true
+      u_id:
+        description: 'Unique ID matching HF'
+        required: true
+      hf_url:
+        description: 'HF Space URL (e.g. https://user-space.hf.space)'
+        required: true
+
+jobs:
+  scrape-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install Dependencies
+        run: pip install requests libtorrent
+
+      - name: Run Peer Scraper
+        env:
+          INFO_HASH: ${{ github.event.inputs.info_hash }}
+          U_ID: ${{ github.event.inputs.u_id }}
+          HF_URL: ${{ github.event.inputs.hf_url }}
+        run: |
+          cat << 'EOF' > scraper.py
+          import os, time, requests, libtorrent as lt
+
+          HF_BASE = os.environ.get("HF_URL").rstrip('/')
+          INFO_HASH = os.environ.get("INFO_HASH")
+          U_ID = os.environ.get("U_ID")
+
+          def scrape():
+              ses = lt.session({'listen_interfaces': '0.0.0.0:6881', 'enable_dht': True})
+              ses.add_dht_router("router.bittorrent.com", 6881)
+              
+              handle = ses.add_torrent({'save_path': './tmp', 'url': f"magnet:?xt=urn:btih:{INFO_HASH}"})
+              print(f"📡 Radar Active for {INFO_HASH}...")
+
+              sent_ips = set()
+              for minute in range(10):
+                  time.sleep(60)
+                  peers = handle.get_peer_info()
+                  extracted = [{"ip": p.ip[0], "port": p.ip[1]} for p in peers if p.ip[0]]
+                  
+                  new_peers = [p for p in extracted if f"{p['ip']}:{p['port']}" not in sent_ips]
+                  
+                  if new_peers:
+                      try:
+                          requests.post(f"{HF_BASE}/inject_peers", json={"id": U_ID, "peers": new_peers}, timeout=10)
+                          for p in new_peers: sent_ips.add(f"{p['ip']}:{p['port']}")
+                          print(f"Pushed {len(new_peers)} new peers.")
+                      except Exception as e: print(f"Push failed: {e}")
+          if __name__ == "__main__": scrape()
+          EOF
+          python scraper.py
