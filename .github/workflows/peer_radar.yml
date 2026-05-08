@@ -17,6 +17,7 @@ jobs:
   scrape-and-push:
     runs-on: ubuntu-latest
     env:
+      # Fixes the Node.js deprecation warning
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
       - name: Set up Python
@@ -34,72 +35,73 @@ jobs:
           HF_URL: ${{ github.event.inputs.hf_url }}
         run: |
           cat << 'EOF' > scraper.py
-import os, time, requests, libtorrent as lt
+          import os, time, requests, libtorrent as lt
 
-HF_BASE = os.environ.get("HF_URL").rstrip('/')
-INFO_HASH = os.environ.get("INFO_HASH")
-U_ID = os.environ.get("U_ID")
+          HF_BASE = os.environ.get("HF_URL").rstrip('/')
+          INFO_HASH = os.environ.get("INFO_HASH")
+          U_ID = os.environ.get("U_ID")
 
-def scrape():
-    print(f"📡 [SCOUT] Launching Modern Radar for ID: {U_ID}")
-    print(f"🔍 [SCOUT] Target Hash: {INFO_HASH}")
-    
-    settings = {
-        'listen_interfaces': '0.0.0.0:6881',
-        'enable_dht': True,
-        'dht_bootstrap_nodes': 'router.bittorrent.com:6881,router.utorrent.com:6881,dht.transmissionbt.com:6881'
-    }
-    ses = lt.session(settings)
-    
-    magnet = f"magnet:?xt=urn:btih:{INFO_HASH}"
-    atp = lt.parse_magnet_uri(magnet)
-    atp.save_path = './tmp'
-    handle = ses.add_torrent(atp)
+          def scrape():
+              print(f"📡 [SCOUT] Launching Modern Radar for ID: {U_ID}")
+              print(f"🔍 [SCOUT] Target Hash: {INFO_HASH}")
+              
+              settings = {
+                  'listen_interfaces': '0.0.0.0:6881',
+                  'enable_dht': True,
+                  'dht_bootstrap_nodes': 'router.bittorrent.com:6881,router.utorrent.com:6881,dht.transmissionbt.com:6881'
+              }
+              ses = lt.session(settings)
+              
+              # FIX: Restored the proper atp.save_path logic to clear Exit Code 1
+              magnet = f"magnet:?xt=urn:btih:{INFO_HASH}"
+              atp = lt.parse_magnet_uri(magnet)
+              atp.save_path = './tmp'
+              handle = ses.add_torrent(atp)
 
-    sent_ips = set()
-    print("🌐 [SCOUT] Crawling DHT network (Checking HF status every 30s)...")
+              sent_ips = set()
+              print("🌐 [SCOUT] Crawling DHT network (Checking HF status every 30s)...")
 
-    start_time = time.time()
-    max_runtime = 3600 
+              start_time = time.time()
+              max_runtime = 3600 
 
-    while (time.time() - start_time) < max_runtime:
-        # 1. HEARTBEAT: CHECK IF MUSCLE IS STILL BUSY
-        try:
-            r = requests.get(f"{HF_BASE}/status/{U_ID}", timeout=10)
-            status = r.json().get("status")
-            if status == "completed":
-                print(f"🏁 [SCOUT] Engine finished task. Exiting to save minutes.", flush=True)
-                break
-            elif status == "stalled":
-                print(f"🛑 [SCOUT] Engine stalled for 10 minutes. Exiting Scout. Engine will keep trying.", flush=True)
-                break
-        except Exception as e:
-            print(f"⚠️ [SCOUT] Status check failed: {e}", flush=True)
+              while (time.time() - start_time) < max_runtime:
+                  # 1. HEARTBEAT: CHECK IF MUSCLE IS STILL BUSY
+                  try:
+                      r = requests.get(f"{HF_BASE}/status/{U_ID}", timeout=10)
+                      status = r.json().get("status")
+                      if status == "completed":
+                          print(f"🏁 [SCOUT] Engine finished task. Exiting to save minutes.", flush=True)
+                          break
+                      elif status == "stalled":
+                          print(f"🛑 [SCOUT] Engine stalled for 10 minutes. Exiting Scout. Engine will keep trying.", flush=True)
+                          break
+                  except Exception as e:
+                      print(f"⚠️ [SCOUT] Status check failed: {e}", flush=True)
 
-        # 2. SCAN & INJECT
-        s = handle.status()
-        ses_status = ses.status()
-        peers = handle.get_peer_info()
-        
-        print(f"⏱️ [{(time.time() - start_time):.0f}s] DHT Nodes: {ses_status.dht_nodes} | Peers Found: {len(peers)}", flush=True)
-        
-        extracted = [{"ip": p.ip[0], "port": p.ip[1]} for p in peers if p.ip[0]]
-        new_peers = [p for p in extracted if f"{p['ip']}:{p['port']}" not in sent_ips]
-        
-        if new_peers:
-            print(f"🚀 [SCOUT] Found {len(new_peers)} new UDP peers! Injecting to Muscle...", flush=True)
-            try:
-                r = requests.post(f"{HF_BASE}/inject_peers", json={"id": U_ID, "peers": new_peers}, timeout=10)
-                if r.status_code == 200:
-                    for p in new_peers: sent_ips.add(f"{p['ip']}:{p['port']}")
-                    print(f"✅ [SCOUT] Injection Successful (Code 200)", flush=True)
-            except Exception as e:
-                print(f"❌ [SCOUT] Injection Failed: {e}", flush=True)
+                  # 2. SCAN & INJECT
+                  s = handle.status()
+                  ses_status = ses.status()
+                  peers = handle.get_peer_info()
+                  
+                  print(f"⏱️ [{(time.time() - start_time):.0f}s] DHT Nodes: {ses_status.dht_nodes} | Peers Found: {len(peers)}", flush=True)
+                  
+                  extracted = [{"ip": p.ip[0], "port": p.ip[1]} for p in peers if p.ip[0]]
+                  new_peers = [p for p in extracted if f"{p['ip']}:{p['port']}" not in sent_ips]
+                  
+                  if new_peers:
+                      print(f"🚀 [SCOUT] Found {len(new_peers)} new UDP peers! Injecting to Muscle...", flush=True)
+                      try:
+                          r = requests.post(f"{HF_BASE}/inject_peers", json={"id": U_ID, "peers": new_peers}, timeout=10)
+                          if r.status_code == 200:
+                              for p in new_peers: sent_ips.add(f"{p['ip']}:{p['port']}")
+                              print(f"✅ [SCOUT] Injection Successful (Code 200)", flush=True)
+                      except Exception as e:
+                          print(f"❌ [SCOUT] Injection Failed: {e}", flush=True)
 
-        time.sleep(30)
+                  time.sleep(30)
 
-if __name__ == "__main__":
-    scrape()
-EOF
+          if __name__ == "__main__":
+              scrape()
+          EOF
           
           python scraper.py
