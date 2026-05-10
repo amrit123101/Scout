@@ -1,4 +1,4 @@
-name: Peer Radar Scraper
+name: Peer Radar Scraper (Cluster Broadcaster)
 
 on:
   workflow_dispatch:
@@ -9,15 +9,11 @@ on:
       u_id:
         description: 'Unique ID matching HF'
         required: true
-      hf_url:
-        description: 'HF Space URL'
-        required: true
 
 jobs:
   scrape-and-push:
     runs-on: ubuntu-latest
     env:
-      # Fixes the Node.js deprecation warning
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
       - name: Set up Python
@@ -32,76 +28,113 @@ jobs:
         env:
           INFO_HASH: ${{ github.event.inputs.info_hash }}
           U_ID: ${{ github.event.inputs.u_id }}
-          HF_URL: ${{ github.event.inputs.hf_url }}
         run: |
           cat << 'EOF' > scraper.py
-          import os, time, requests, libtorrent as lt
+          import os, time, requests, urllib.parse, libtorrent as lt
 
-          HF_BASE = os.environ.get("HF_URL").rstrip('/')
+          # 🛰️ THE 3 ENGINE TARGETS (No more 3x pings, Scout handles them all)
+          TARGETS = [
+              "https://amri12310-sys-b-engine.hf.space",
+              "https://amri12310-sys-c-engine.hf.space",
+              "https://amri12310-sys-d-engine.hf.space"
+          ]
+          
           INFO_HASH = os.environ.get("INFO_HASH")
           U_ID = os.environ.get("U_ID")
 
           def scrape():
-              print(f"📡 [SCOUT] Launching Modern Radar for ID: {U_ID}")
-              print(f"🔍 [SCOUT] Target Hash: {INFO_HASH}")
+              print(f"📡 [SCOUT] Launching UDP-to-TCP Cluster Bridge for: {U_ID}")
+              
+              # 🚀 THE UDP BOMB: GitHub can reach these, HF cannot!
+              udp_trackers = [
+                  "udp://tracker.opentrackr.org:1337/announce",
+                  "udp://open.stealth.si:80/announce",
+                  "udp://tracker.torrent.eu.org:451/announce",
+                  "udp://tracker.bittor.pw:1337/announce",
+                  "udp://exodus.desync.com:6969/announce",
+                  "udp://tracker.moeking.me:6969/announce"
+              ]
+              tr_str = "".join([f"&tr={urllib.parse.quote(t)}" for t in udp_trackers])
               
               settings = {
                   'listen_interfaces': '0.0.0.0:6881',
                   'enable_dht': True,
-                  'dht_bootstrap_nodes': 'router.bittorrent.com:6881,router.utorrent.com:6881,dht.transmissionbt.com:6881'
+                  'dht_bootstrap_nodes': 'router.bittorrent.com:6881,router.utorrent.com:6881,dht.transmissionbt.com:6881',
+                  'announce_to_all_trackers': True,
+                  'announce_to_all_tiers': True
               }
+              
               ses = lt.session(settings)
               
-              # FIX: Restored the proper atp.save_path logic to clear Exit Code 1
-              magnet = f"magnet:?xt=urn:btih:{INFO_HASH}"
+              # AI Fix: Create temp folder to avoid Libtorrent save errors
+              os.makedirs('./tmp', exist_ok=True)
+              magnet = f"magnet:?xt=urn:btih:{INFO_HASH}{tr_str}"
               atp = lt.parse_magnet_uri(magnet)
               atp.save_path = './tmp'
               handle = ses.add_torrent(atp)
 
+              # AI Fix: Let DHT Wake up
+              print("⏳ [SCOUT] Warming up DHT routing tables for 30 seconds...", flush=True)
+              time.sleep(30)
+
               sent_ips = set()
-              print("🌐 [SCOUT] Crawling DHT network (Checking HF status every 30s)...")
-
               start_time = time.time()
-              max_runtime = 3600 
+              last_active_time = time.time() # Used for the 15-minute kill switch
 
-              while (time.time() - start_time) < max_runtime:
-                  # 1. HEARTBEAT: CHECK IF MUSCLE IS STILL BUSY
-                  try:
-                      r = requests.get(f"{HF_BASE}/status/{U_ID}", timeout=10)
-                      status = r.json().get("status")
-                      if status == "completed":
-                          print(f"🏁 [SCOUT] Engine finished task. Exiting to save minutes.", flush=True)
-                          break
-                      elif status == "stalled":
-                          print(f"🛑 [SCOUT] Engine stalled for 10 minutes. Exiting Scout. Engine will keep trying.", flush=True)
-                          break
-                  except Exception as e:
-                      print(f"⚠️ [SCOUT] Status check failed: {e}", flush=True)
+              while (time.time() - start_time) < 3600:
+                  
+                  # 1. 🛑 CLUSTER HEARTBEAT & 15-MIN KILL SWITCH
+                  all_completed = True
+                  any_active = False
 
-                  # 2. SCAN & INJECT
-                  s = handle.status()
-                  ses_status = ses.status()
-                  peers = handle.get_peer_info()
-                  
-                  print(f"⏱️ [{(time.time() - start_time):.0f}s] DHT Nodes: {ses_status.dht_nodes} | Peers Found: {len(peers)}", flush=True)
-                  
-                  extracted = [{"ip": p.ip[0], "port": p.ip[1]} for p in peers if p.ip[0]]
-                  new_peers = [p for p in extracted if f"{p['ip']}:{p['port']}" not in sent_ips]
-                  
-                  if new_peers:
-                      print(f"🚀 [SCOUT] Found {len(new_peers)} new UDP peers! Injecting to Muscle...", flush=True)
+                  for url in TARGETS:
                       try:
-                          r = requests.post(f"{HF_BASE}/inject_peers", json={"id": U_ID, "peers": new_peers}, timeout=10)
-                          if r.status_code == 200:
-                              for p in new_peers: sent_ips.add(f"{p['ip']}:{p['port']}")
-                              print(f"✅ [SCOUT] Injection Successful (Code 200)", flush=True)
-                      except Exception as e:
-                          print(f"❌ [SCOUT] Injection Failed: {e}", flush=True)
+                          r = requests.get(f"{url}/status/{U_ID}", timeout=5)
+                          status = r.json().get("status")
+                          
+                          if status != "completed":
+                              all_completed = False
+                          
+                          # If an engine is active, it resets the 15-min death timer
+                          if status == "active":
+                              any_active = True
+                      except: pass
 
+                  if all_completed:
+                      print("🏁 [SCOUT] All 3 Engines finished downloading. Shutting down Scout.")
+                      break
+                  
+                  if any_active:
+                      last_active_time = time.time() # Reset death timer
+                  else:
+                      # If 15 minutes (900 seconds) pass with 0 engines active (stalled)
+                      if (time.time() - last_active_time) > 900:
+                          print("💀 [SCOUT] 15-MINUTE KILL SWITCH ACTIVATED. Swarm is dead. Exiting to save Action minutes.")
+                          break
+
+                  # 2. 🌐 UDP/DHT DISCOVERY & INJECTION
+                  peers = handle.get_peer_info()
+                  new_peers = []
+                  
+                  for p in peers:
+                      ip_port = f"{p.ip[0]}:{p.ip[1]}"
+                      if ip_port not in sent_ips:
+                          new_peers.append({"ip": p.ip[0], "port": p.ip[1]})
+                          sent_ips.add(ip_port)
+
+                  if new_peers:
+                      print(f"🚀 [SCOUT] Found {len(new_peers)} new UDP/DHT peers! Blasting to cluster...", flush=True)
+                      for url in TARGETS:
+                          try:
+                              requests.post(f"{url}/inject_peers", json={"id": U_ID, "peers": new_peers}, timeout=5)
+                          except: pass
+                  
+                  ses_stat = ses.status()
+                  print(f"⏱️ [{int(time.time()-start_time)}s] DHT Nodes: {ses_stat.dht_nodes} | UDP Peers Bridged: {len(sent_ips)}", flush=True)
+                  
                   time.sleep(30)
 
           if __name__ == "__main__":
               scrape()
           EOF
-          
           python scraper.py
