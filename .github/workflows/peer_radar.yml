@@ -45,8 +45,8 @@ jobs:
           def scrape():
               print(f"📡 [SCOUT] Launching UDP-to-TCP Cluster Bridge for: {U_ID}")
               
-              # 🚀 THE UDP BOMB: GitHub can reach these, HF cannot!
-              udp_trackers = [
+              # 🚀 THE UDP BOMB: Hardcoded Fallbacks
+              hardcoded_trackers = [
                   "udp://tracker.opentrackr.org:1337/announce",
                   "udp://open.stealth.si:80/announce",
                   "udp://tracker.torrent.eu.org:451/announce",
@@ -54,7 +54,20 @@ jobs:
                   "udp://exodus.desync.com:6969/announce",
                   "udp://tracker.moeking.me:6969/announce"
               ]
-              tr_str = "".join([f"&tr={urllib.parse.quote(t)}" for t in udp_trackers])
+              
+              # ⚡ NEW: Fetch Ngosang's Live UDP List
+              print(f"📡 [SCOUT] Fetching dynamic UDP tracker list...", flush=True)
+              try:
+                  r = requests.get("https://raw.githubusercontent.com/ngosang/trackerslist/master/trackers_all_udp.txt", timeout=5)
+                  dynamic_trackers = [t for t in r.text.split('\n') if t.strip() and t.startswith('udp://')]
+              except Exception as e:
+                  print(f"⚠️ [SCOUT] Failed to fetch dynamic trackers: {e}")
+                  dynamic_trackers = []
+
+              # Combine, deduplicate, and format
+              all_udp_trackers = list(set(hardcoded_trackers + dynamic_trackers))
+              tr_str = "".join([f"&tr={urllib.parse.quote(t)}" for t in all_udp_trackers])
+              print(f"🚀 [SCOUT] Armed with {len(all_udp_trackers)} total UDP trackers.", flush=True)
               
               settings = {
                   'listen_interfaces': '0.0.0.0:6881',
