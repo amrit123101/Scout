@@ -105,7 +105,7 @@ jobs:
                           r = requests.get(f"{url}/status/{U_ID}", timeout=5)
                           status = r.json().get("status")
                           
-                          if status != "completed":
+                          if status != "finished":
                               all_completed = False
                           
                           # If an engine is active, it resets the 15-min death timer
