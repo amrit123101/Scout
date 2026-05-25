@@ -74,7 +74,11 @@ jobs:
                   'enable_dht': True,
                   'dht_bootstrap_nodes': 'router.bittorrent.com:6881,router.utorrent.com:6881,dht.transmissionbt.com:6881',
                   'announce_to_all_trackers': True,
-                  'announce_to_all_tiers': True
+                  'announce_to_all_tiers': True,
+                  # ⚡ UPGRADE: Massive limits and uTP to catch strict home users
+                  'connections_limit': 2000,
+                  'enable_outgoing_utp': True,
+                  'enable_incoming_utp': True
               }
               
               ses = lt.session(settings)
@@ -91,61 +95,71 @@ jobs:
               time.sleep(30)
 
               sent_ips = set()
+              batch_new_peers = [] # ⚡ UPGRADE: Holds peers captured during the 0.5s loop
+              
               start_time = time.time()
               last_active_time = time.time() # Used for the 15-minute kill switch
+              last_push_time = time.time() # ⚡ UPGRADE: Timer for the 10-second batch push
 
               while (time.time() - start_time) < 3600:
+                  current_time = time.time()
                   
-                  # 1. 🛑 CLUSTER HEARTBEAT & 15-MIN KILL SWITCH
-                  all_completed = True
-                  any_active = False
-
-                  for url in TARGETS:
-                      try:
-                          r = requests.get(f"{url}/status/{U_ID}", timeout=5)
-                          status = r.json().get("status")
-                          
-                          if status != "finished":
-                              all_completed = False
-                          
-                          # If an engine is active, it resets the 15-min death timer
-                          if status == "active":
-                              any_active = True
-                      except: pass
-
-                  if all_completed:
-                      print("🏁 [SCOUT] All 3 Engines finished downloading. Shutting down Scout.")
-                      break
-                  
-                  if any_active:
-                      last_active_time = time.time() # Reset death timer
-                  else:
-                      # If 15 minutes (900 seconds) pass with 0 engines active (stalled)
-                      if (time.time() - last_active_time) > 900:
-                          print("💀 [SCOUT] 15-MINUTE KILL SWITCH ACTIVATED. Swarm is dead. Exiting to save Action minutes.")
-                          break
-
-                  # 2. 🌐 UDP/DHT DISCOVERY & INJECTION
+                  # ⚡ UPGRADE: Extract peers instantly into memory
                   peers = handle.get_peer_info()
-                  new_peers = []
-                  
                   for p in peers:
                       ip_port = f"{p.ip[0]}:{p.ip[1]}"
                       if ip_port not in sent_ips:
-                          new_peers.append({"ip": p.ip[0], "port": p.ip[1]})
+                          batch_new_peers.append({"ip": p.ip[0], "port": p.ip[1]})
                           sent_ips.add(ip_port)
 
-                  if new_peers:
-                      print(f"🚀 [SCOUT] Found {len(new_peers)} new UDP/DHT peers! Blasting to cluster...", flush=True)
+                  # ⚡ UPGRADE: Only run HTTP checks/pushes once every 10 seconds
+                  if (current_time - last_push_time) >= 10:
+                  
+                      # 1. 🛑 CLUSTER HEARTBEAT & 15-MIN KILL SWITCH
+                      all_completed = True
+                      any_active = False
+
                       for url in TARGETS:
                           try:
-                              requests.post(f"{url}/inject_peers", json={"id": U_ID, "peers": new_peers}, timeout=5)
+                              r = requests.get(f"{url}/status/{U_ID}", timeout=5)
+                              status = r.json().get("status")
+                              
+                              if status != "finished":
+                                  all_completed = False
+                              
+                              # If an engine is active, it resets the 15-min death timer
+                              if status == "active":
+                                  any_active = True
                           except: pass
-                  
-                  ses_stat = ses.status()
-                  print(f"⏱️ [{int(time.time()-start_time)}s] DHT Nodes: {ses_stat.dht_nodes} | UDP Peers Bridged: {len(sent_ips)}", flush=True)
-                  
-                  time.sleep(30)
+
+                      if all_completed:
+                          print("🏁 [SCOUT] All 3 Engines finished downloading. Shutting down Scout.")
+                          break
+                      
+                      if any_active:
+                          last_active_time = current_time # Reset death timer
+                      else:
+                          # If 15 minutes (900 seconds) pass with 0 engines active (stalled)
+                          if (current_time - last_active_time) > 900:
+                              print("💀 [SCOUT] 15-MINUTE KILL SWITCH ACTIVATED. Swarm is dead. Exiting to save Action minutes.")
+                              break
+
+                      # 2. 🌐 UDP/DHT DISCOVERY & INJECTION
+                      if batch_new_peers:
+                          print(f"🚀 [SCOUT] Found {len(batch_new_peers)} new UDP/DHT peers! Blasting to cluster...", flush=True)
+                          for url in TARGETS:
+                              try:
+                                  requests.post(f"{url}/inject_peers", json={"id": U_ID, "peers": batch_new_peers}, timeout=5)
+                              except: pass
+                          batch_new_peers.clear() # Clear the batch after sending
+                      
+                      ses_stat = ses.status()
+                      print(f"⏱️ [{int(current_time-start_time)}s] DHT Nodes: {ses_stat.dht_nodes} | UDP Peers Bridged: {len(sent_ips)}", flush=True)
+                      
+                      last_push_time = current_time # Reset the batch timer
+
+                  # ⚡ UPGRADE: The 0.5s local memory trap
+                  time.sleep(0.5)
 
           if __name__ == "__main__":
               scrape()
